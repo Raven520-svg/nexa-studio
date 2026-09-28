@@ -1,163 +1,71 @@
 import streamlit as st
+import os
+import re
+import json
+import tempfile
 from pathlib import Path
 from datetime import datetime
-import tempfile
-import os
-import json
 
-# Optional dependency used to communicate with Hugging Face Spaces
-try:
-    from gradio_client import Client, handle_file
-except ImportError:
-    Client = None
-    handle_file = None
-
-
-# ============================================================
+# =========================================================
 # NEXA STUDIO
 # AI MUSIC CREATION STUDIO
-# ============================================================
+# =========================================================
 
 st.set_page_config(
     page_title="NEXA STUDIO",
     page_icon="🎧",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
+# =========================================================
+# HEARTMULA CONNECTION
+# =========================================================
 
-# ============================================================
-# COLORFUL FUTURISTIC DESIGN
-# ============================================================
-
-st.markdown(
-    """
-    <style>
-
-    .stApp {
-        background:
-            radial-gradient(circle at 10% 10%, rgba(110,70,255,.20), transparent 30%),
-            radial-gradient(circle at 90% 20%, rgba(255,50,150,.18), transparent 30%),
-            radial-gradient(circle at 50% 90%, rgba(0,220,255,.10), transparent 35%),
-            #080A14;
-        color: white;
-    }
-
-    section[data-testid="stSidebar"] {
-        background:
-            linear-gradient(180deg, #0C1022 0%, #11142B 50%, #090B17 100%);
-        border-right: 1px solid rgba(255,255,255,.08);
-    }
-
-    .nexa-title {
-        font-size: 3.2rem;
-        font-weight: 900;
-        letter-spacing: 4px;
-        background: linear-gradient(
-            90deg,
-            #8B5CF6,
-            #EC4899,
-            #22D3EE,
-            #F59E0B
-        );
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        text-align: center;
-        margin-bottom: 5px;
-    }
-
-    .nexa-subtitle {
-        text-align: center;
-        color: #B8BDD6;
-        font-size: 1.05rem;
-        margin-bottom: 30px;
-    }
-
-    .hero {
-        padding: 45px 30px;
-        border-radius: 28px;
-        background:
-            linear-gradient(
-                135deg,
-                rgba(124,58,237,.30),
-                rgba(236,72,153,.20),
-                rgba(14,165,233,.15)
-            );
-        border: 1px solid rgba(255,255,255,.10);
-        text-align: center;
-        margin-bottom: 25px;
-    }
-
-    .hero h1 {
-        font-size: 3rem;
-        margin-bottom: 10px;
-    }
-
-    .hero p {
-        color: #D4D7E8;
-        font-size: 1.1rem;
-    }
-
-    .card {
-        padding: 25px;
-        border-radius: 20px;
-        background: rgba(255,255,255,.045);
-        border: 1px solid rgba(255,255,255,.08);
-        margin-bottom: 18px;
-    }
-
-    .step {
-        display: inline-block;
-        padding: 7px 14px;
-        border-radius: 50px;
-        background: linear-gradient(90deg,#7C3AED,#EC4899);
-        color: white;
-        font-weight: 700;
-        margin-bottom: 10px;
-    }
-
-    .status {
-        padding: 15px;
-        border-radius: 15px;
-        background: rgba(34,211,238,.08);
-        border: 1px solid rgba(34,211,238,.20);
-        margin: 15px 0;
-    }
-
-    .small-muted {
-        color: #969CB8;
-        font-size: .88rem;
-    }
-
-    footer {
-        text-align: center;
-        color: #777C99;
-        margin-top: 60px;
-        padding: 20px;
-    }
-
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+try:
+    from gradio_client import Client
+    GRADIO_AVAILABLE = True
+except Exception:
+    GRADIO_AVAILABLE = False
 
 
-# ============================================================
+# Current HeartMuLa ZeroGPU Space
+HEARTMULA_SPACE = "Thebeachingwaulrus/heartmula"
+
+# The current Space exposes the generation function with
+# these six inputs:
+#
+# lyrics
+# tags
+# max_duration_seconds
+# temperature
+# topk
+# cfg_scale
+#
+# We intentionally do NOT try to discover a fake /generate
+# endpoint.
+
+
+# =========================================================
 # SESSION STATE
-# ============================================================
+# =========================================================
 
 defaults = {
-    "page": "🏠 Home",
+    "page": "Home",
     "lyrics": "",
-    "style": "",
-    "genre": "Afrofusion",
-    "vocal": "Male",
-    "mood": "Emotional",
-    "artist": "None",
+    "sound_description": "",
+    "genre": "Afrobeat",
+    "mood": "Energetic",
+    "vocal_style": "Male",
     "bpm": 100,
-    "projects": [],
+    "artist": "None",
     "generated_audio": None,
-    "generation_status": "",
+    "generated_title": "",
+    "generation_message": "",
+    "projects": [],
+    "recording": None,
+    "beat_file": None,
+    "master_file": None,
 }
 
 for key, value in defaults.items():
@@ -165,262 +73,480 @@ for key, value in defaults.items():
         st.session_state[key] = value
 
 
-# ============================================================
-# HEARTMULA ENGINE
-# ============================================================
+# =========================================================
+# CUSTOM CSS
+# =========================================================
 
-HEARTMULA_SPACE = "projectlosangeles/HeartMuLa"
-
-
-def get_heartmula_client():
-    """Connect to the public HeartMuLa Hugging Face Space."""
-
-    if Client is None:
-        raise RuntimeError(
-            "gradio_client is not installed. "
-            "Add gradio_client to requirements.txt."
-        )
-
-    return Client(HEARTMULA_SPACE)
-
-
-def inspect_heartmula_api(client):
+st.markdown(
     """
-    Ask the Space what API endpoints are available.
-    This prevents us from hard-coding an endpoint that may change.
+<style>
+
+.stApp {
+    background:
+        radial-gradient(circle at 10% 10%, rgba(255,0,120,0.12), transparent 28%),
+        radial-gradient(circle at 90% 20%, rgba(0,200,255,0.12), transparent 30%),
+        radial-gradient(circle at 50% 90%, rgba(120,0,255,0.10), transparent 30%),
+        #08090f;
+    color: #ffffff;
+}
+
+section[data-testid="stSidebar"] {
+    background:
+        linear-gradient(180deg, #10121d 0%, #090a10 100%);
+    border-right: 1px solid rgba(255,255,255,0.08);
+}
+
+.nexa-logo {
+    font-size: 32px;
+    font-weight: 900;
+    letter-spacing: 3px;
+    background: linear-gradient(90deg,#ff2ea6,#7c5cff,#00d9ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.nexa-subtitle {
+    color: #9ea4b7;
+    font-size: 13px;
+    margin-bottom: 25px;
+}
+
+.hero {
+    padding: 45px 30px;
+    border-radius: 28px;
+    background:
+        linear-gradient(
+            135deg,
+            rgba(255,46,166,0.18),
+            rgba(124,92,255,0.16),
+            rgba(0,217,255,0.12)
+        );
+    border: 1px solid rgba(255,255,255,0.09);
+    margin-bottom: 25px;
+}
+
+.hero h1 {
+    font-size: 52px;
+    line-height: 1.0;
+    margin-bottom: 15px;
+}
+
+.hero p {
+    color: #c2c6d4;
+    font-size: 17px;
+    max-width: 750px;
+}
+
+.card {
+    background: rgba(20,22,34,0.78);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 20px;
+    padding: 22px;
+    margin-bottom: 18px;
+}
+
+.card h3 {
+    margin-top: 0;
+}
+
+.feature-card {
+    min-height: 170px;
+}
+
+.gradient-text {
+    background: linear-gradient(90deg,#ff2ea6,#7c5cff,#00d9ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.status-good {
+    padding: 12px 16px;
+    border-radius: 12px;
+    background: rgba(0,220,140,0.10);
+    border: 1px solid rgba(0,220,140,0.25);
+    color: #8fffd0;
+}
+
+.status-warning {
+    padding: 12px 16px;
+    border-radius: 12px;
+    background: rgba(255,180,0,0.10);
+    border: 1px solid rgba(255,180,0,0.25);
+    color: #ffd66b;
+}
+
+.small-muted {
+    color: #8c92a6;
+    font-size: 13px;
+}
+
+div.stButton > button {
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.12);
+    min-height: 45px;
+    font-weight: 700;
+}
+
+div.stButton > button:hover {
+    border-color: rgba(255,46,166,0.65);
+}
+
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+# =========================================================
+# HELPERS
+# =========================================================
+
+def go(page):
+    st.session_state.page = page
+    st.rerun()
+
+
+def clean_tags(text):
+    """
+    Convert the user's natural-language description into
+    useful HeartMuLa-style comma-separated tags.
     """
 
-    try:
-        return client.view_api(return_format="dict")
-    except TypeError:
-        return client.view_api()
+    text = text.lower().strip()
+
+    replacements = {
+        "afrobeats": "afrobeat",
+        "afro beat": "afrobeat",
+        "afro fusion": "afrofusion",
+        "afro-fusion": "afrofusion",
+        "rnb": "r&b",
+        "r&b": "r&b",
+        "hip hop": "hip-hop",
+        "hiphop": "hip-hop",
+        "male voice": "male vocals",
+        "female voice": "female vocals",
+        "sad": "emotional",
+        "happy": "uplifting",
+        "slow": "slow tempo",
+        "fast": "upbeat",
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    return text
 
 
-def find_generation_endpoint(api_info):
+def build_heartmula_tags(
+    genre,
+    mood,
+    vocal_style,
+    bpm,
+    sound_description,
+    artist,
+):
+    tags = []
+
+    # Genre
+    if genre:
+        tags.append(genre.lower())
+
+    # Mood
+    if mood:
+        tags.append(mood.lower())
+
+    # Vocal
+    if vocal_style:
+        tags.append(f"{vocal_style.lower()} vocals")
+
+    # BPM
+    if bpm:
+        if bpm < 80:
+            tags.append("slow tempo")
+        elif bpm < 105:
+            tags.append("mid tempo")
+        elif bpm < 125:
+            tags.append("upbeat")
+        else:
+            tags.append("fast tempo")
+
+    # Artist inspiration is converted to broad characteristics.
+    # We do NOT ask the model to copy an artist's exact voice,
+    # recording, melody, or song.
+    artist_styles = {
+        "Omah Lay": "melodic afrobeat, emotional, atmospheric",
+        "Burna Boy": "afrofusion, rhythmic, warm bass",
+        "Tems": "soulful afrobeat, atmospheric, smooth",
+        "Wizkid": "afrobeats, melodic, smooth groove",
+        "Rema": "modern afrobeat, energetic, catchy",
+        "Davido": "afrobeats, energetic, rhythmic",
+        "Asake": "afrobeats, amapiano influence, percussive",
+        "Fireboy DML": "melodic afrobeat, emotional, smooth",
+        "None": "",
+    }
+
+    if artist in artist_styles:
+        style = artist_styles[artist]
+        if style:
+            tags.extend([x.strip() for x in style.split(",")])
+
+    # Natural-language description
+    if sound_description:
+        description = clean_tags(sound_description)
+
+        # Only keep useful musical words.
+        useful_words = [
+            "hot",
+            "lively",
+            "dark",
+            "soft",
+            "smooth",
+            "melodic",
+            "emotional",
+            "romantic",
+            "energetic",
+            "dance",
+            "club",
+            "acoustic",
+            "piano",
+            "guitar",
+            "bass",
+            "drums",
+            "synth",
+            "synthesizer",
+            "percussion",
+            "atmospheric",
+            "dreamy",
+            "cinematic",
+            "street",
+            "urban",
+            "spiritual",
+            "soulful",
+            "catchy",
+            "uplifting",
+        ]
+
+        for word in useful_words:
+            if word in description:
+                tags.append(word)
+
+    # Remove duplicates while preserving order
+    final_tags = []
+
+    for tag in tags:
+        tag = tag.strip()
+
+        if not tag:
+            continue
+
+        if tag not in final_tags:
+            final_tags.append(tag)
+
+    return ",".join(final_tags)
+
+
+def normalize_audio_result(result):
     """
-    Find a likely music-generation endpoint.
-
-    We look for names such as:
-    /generate
-    /generate_music
-    /predict
-    """
-
-    candidates = [
-        "/generate",
-        "/generate_music",
-        "/generate_song",
-        "/predict"
-    ]
-
-    if isinstance(api_info, dict):
-        named_endpoints = api_info.get("named_endpoints", {})
-
-        for candidate in candidates:
-            if candidate in named_endpoints:
-                return candidate
-
-        # Fall back to first named endpoint
-        if named_endpoints:
-            return list(named_endpoints.keys())[0]
-
-    return None
-
-
-def generate_song(lyrics, tags):
-    """
-    Generate a song using the HeartMuLa Hugging Face Space.
-
-    IMPORTANT:
-    The exact Space endpoint can change, so this function first
-    inspects the Space rather than assuming a fixed API.
-    """
-
-    client = get_heartmula_client()
-
-    api_info = inspect_heartmula_api(client)
-
-    endpoint = find_generation_endpoint(api_info)
-
-    if not endpoint:
-        raise RuntimeError(
-            "Could not find a music generation endpoint on the "
-            "HeartMuLa Space."
-        )
-
-    st.session_state.generation_status = (
-        f"Connected to HeartMuLa. Endpoint: {endpoint}"
-    )
-
-    # --------------------------------------------------------
-    # First attempt:
-    # Most HeartMuLa Spaces expose lyrics + tags as inputs.
-    # --------------------------------------------------------
-
-    try:
-        result = client.predict(
-            lyrics,
-            tags,
-            api_name=endpoint
-        )
-        return result
-
-    except Exception as first_error:
-
-        # ----------------------------------------------------
-        # Some Spaces expose named parameters instead.
-        # Try a second call using keyword arguments.
-        # ----------------------------------------------------
-
-        try:
-            result = client.predict(
-                lyrics=lyrics,
-                tags=tags,
-                api_name=endpoint
-            )
-            return result
-
-        except Exception as second_error:
-
-            raise RuntimeError(
-                "HeartMuLa was reached, but its current API "
-                "input format did not match the NEXA connector.\n\n"
-                f"First attempt: {first_error}\n\n"
-                f"Second attempt: {second_error}"
-            )
-
-
-def extract_audio_result(result):
-    """
-    Try to find an audio filepath from the result returned by Gradio.
+    Gradio can return a filepath, URL, dictionary, tuple, or list
+    depending on its version. Try to locate the audio output.
     """
 
     if result is None:
         return None
 
-    # Direct filepath
     if isinstance(result, str):
-        if result.endswith((".mp3", ".wav", ".flac", ".ogg", ".m4a")):
-            return result
+        return result
 
-    # Tuple/list result
-    if isinstance(result, (tuple, list)):
-        for item in result:
-
-            if isinstance(item, str):
-                if item.endswith(
-                    (".mp3", ".wav", ".flac", ".ogg", ".m4a")
-                ):
-                    return item
-
-            if isinstance(item, dict):
-                for key in ["path", "url", "name"]:
-                    value = item.get(key)
-
-                    if isinstance(value, str):
-                        if value.endswith(
-                            (".mp3", ".wav", ".flac", ".ogg", ".m4a")
-                        ):
-                            return value
-
-    # Dictionary result
     if isinstance(result, dict):
-        for key in ["path", "url", "audio", "output"]:
+        for key in ["path", "url", "value"]:
+            if key in result and result[key]:
+                return normalize_audio_result(result[key])
 
-            value = result.get(key)
-
-            if isinstance(value, str):
-                return value
-
-            if isinstance(value, dict):
-                for subkey in ["path", "url", "name"]:
-                    subvalue = value.get(subkey)
-
-                    if isinstance(subvalue, str):
-                        if subvalue.endswith(
-                            (".mp3", ".wav", ".flac", ".ogg", ".m4a"
-                        )):
-                            return subvalue
+    if isinstance(result, (list, tuple)):
+        for item in result:
+            found = normalize_audio_result(item)
+            if found:
+                return found
 
     return None
 
 
-# ============================================================
+def download_remote_file(path_or_url):
+    """
+    Download a generated file when Gradio gives us a remote URL.
+    """
+
+    if not path_or_url:
+        return None
+
+    if os.path.exists(path_or_url):
+        return path_or_url
+
+    try:
+        import requests
+
+        response = requests.get(path_or_url, timeout=180)
+        response.raise_for_status()
+
+        suffix = ".wav"
+
+        if ".mp3" in path_or_url.lower():
+            suffix = ".mp3"
+
+        temp = tempfile.NamedTemporaryFile(
+            suffix=suffix,
+            delete=False
+        )
+
+        temp.write(response.content)
+        temp.close()
+
+        return temp.name
+
+    except Exception:
+        return None
+
+
+def generate_with_heartmula(
+    lyrics,
+    tags,
+    duration,
+    temperature,
+    topk,
+    cfg_scale,
+):
+    """
+    Connect to the current HeartMuLa ZeroGPU Space.
+
+    IMPORTANT:
+    We use the actual six inputs exposed by the current Space.
+    """
+
+    if not GRADIO_AVAILABLE:
+        raise RuntimeError(
+            "gradio_client is not installed. "
+            "Add gradio_client to requirements.txt."
+        )
+
+    if not lyrics.strip():
+        raise ValueError("Please enter your lyrics.")
+
+    if not tags.strip():
+        raise ValueError("Please provide a sound/style description.")
+
+    # Connect to the CURRENT working Space.
+    client = Client(HEARTMULA_SPACE)
+
+    # Exact current function exposed by the Space.
+    result = client.predict(
+        lyrics,
+        tags,
+        int(duration),
+        float(temperature),
+        int(topk),
+        float(cfg_scale),
+        api_name="/generate_music",
+    )
+
+    audio_path = normalize_audio_result(result)
+
+    if not audio_path:
+        raise RuntimeError(
+            "HeartMuLa completed the request but did not return "
+            "an audio file."
+        )
+
+    # Download remote result if necessary.
+    local_path = download_remote_file(audio_path)
+
+    if local_path:
+        return local_path
+
+    return audio_path
+
+
+def save_project(title, lyrics, tags, audio_path):
+    project = {
+        "title": title,
+        "lyrics": lyrics,
+        "tags": tags,
+        "audio": audio_path,
+        "created": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }
+
+    st.session_state.projects.insert(0, project)
+
+
+# =========================================================
 # SIDEBAR
-# ============================================================
+# =========================================================
 
 with st.sidebar:
 
     st.markdown(
-        """
-        <div style="text-align:center;">
-            <div style="font-size:2.5rem;">🎧</div>
-            <h2>NEXA STUDIO</h2>
-            <p class="small-muted">
-                Step Into Your Next Sound
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True
+        '<div class="nexa-logo">NEXA</div>',
+        unsafe_allow_html=True,
     )
 
-    st.divider()
+    st.markdown(
+        '<div class="nexa-subtitle">STEP INTO YOUR NEXT ERA</div>',
+        unsafe_allow_html=True,
+    )
 
-    pages = [
-        "🏠 Home",
-        "✨ Create a Song",
-        "🎙️ Recording Studio",
-        "🥁 Beat Lab",
-        "🎚️ Mix & Master",
-        "🎵 My Songs",
-        "🚀 Release Music",
-        "⚙️ Settings"
+    menu_items = [
+        ("🏠", "Home"),
+        ("🎵", "Create a Song"),
+        ("🎙️", "Recording Studio"),
+        ("🥁", "Beat Lab"),
+        ("🎚️", "Mix & Master"),
+        ("💿", "My Songs"),
+        ("🚀", "Release Music"),
+        ("⚙️", "Settings"),
     ]
 
-    st.session_state.page = st.radio(
-        "Studio",
-        pages,
-        index=pages.index(st.session_state.page)
-    )
+    for icon, name in menu_items:
+
+        if st.button(
+            f"{icon}  {name}",
+            key=f"menu_{name}",
+            use_container_width=True,
+        ):
+            go(name)
 
     st.divider()
 
     st.markdown(
         """
         <div class="small-muted">
-        🎤 AI Song Creation<br>
-        🥁 Beat Production<br>
-        🎚️ Mixing & Mastering<br>
-        🎵 Private Music Library
+        NEXA STUDIO<br>
+        AI-powered music creation
         </div>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
 
-# ============================================================
+# =========================================================
 # HOME
-# ============================================================
+# =========================================================
 
-if st.session_state.page == "🏠 Home":
+if st.session_state.page == "Home":
 
     st.markdown(
         """
         <div class="hero">
-            <div class="nexa-title">NEXA STUDIO</div>
-            <div class="nexa-subtitle">
-                Your private AI-powered music creation space
-            </div>
-
-            <h1>🎵 Turn Your Lyrics Into Music</h1>
-
+            <h1>
+                Make Music.<br>
+                <span class="gradient-text">Enter Your Next Era.</span>
+            </h1>
             <p>
-                Write your lyrics. Describe the sound.
-                Build your next song.
+                Turn your lyrics and ideas into original music,
+                experiment with sounds, record vocals, mix your
+                tracks and build your personal music library.
             </p>
         </div>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
     col1, col2, col3 = st.columns(3)
@@ -428,156 +554,139 @@ if st.session_state.page == "🏠 Home":
     with col1:
         st.markdown(
             """
-            <div class="card">
-                <h2>✍️ Lyrics</h2>
+            <div class="card feature-card">
+                <h3>🎵 AI Song Creator</h3>
                 <p>
-                Start with your own words and structure
-                your song into verses, chorus and bridge.
+                Give NEXA your lyrics and describe how you want
+                the song to feel.
                 </p>
             </div>
             """,
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
     with col2:
         st.markdown(
             """
-            <div class="card">
-                <h2>🎤 AI Vocals</h2>
+            <div class="card feature-card">
+                <h3>🎙️ Recording Studio</h3>
                 <p>
-                Generate a complete musical performance
-                using the HeartMuLa engine.
+                Upload or record vocals and prepare them for
+                your production workflow.
                 </p>
             </div>
             """,
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
     with col3:
         st.markdown(
             """
-            <div class="card">
-                <h2>🥁 Production</h2>
+            <div class="card feature-card">
+                <h3>🥁 Beat Lab</h3>
                 <p>
-                Describe your genre, mood, instruments,
-                rhythm and overall sound.
+                Build your sound around beats, instruments,
+                tempo and production ideas.
                 </p>
             </div>
             """,
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
-    st.markdown("### 🚀 Start Creating")
+    st.markdown("### Start Creating")
 
     if st.button(
-        "✨ CREATE A NEW SONG",
+        "✨ Create My First Song",
+        use_container_width=True,
         type="primary",
-        use_container_width=True
     ):
-        st.session_state.page = "✨ Create a Song"
-        st.rerun()
+        go("Create a Song")
 
 
-# ============================================================
+# =========================================================
 # CREATE A SONG
-# ============================================================
+# =========================================================
 
-elif st.session_state.page == "✨ Create a Song":
+elif st.session_state.page == "Create a Song":
 
-    st.markdown(
-        '<div class="nexa-title">CREATE A SONG</div>',
-        unsafe_allow_html=True
+    st.title("🎵 Create a Song")
+
+    st.caption(
+        "Lyrics → Sound Direction → AI Generation → Your Song"
     )
 
-    st.markdown(
-        '<div class="nexa-subtitle">'
-        'Lyrics → Sound → AI Music'
-        '</div>',
-        unsafe_allow_html=True
-    )
-
-    # --------------------------------------------------------
+    # -----------------------------------------------------
     # STEP 1
-    # --------------------------------------------------------
+    # -----------------------------------------------------
 
     st.markdown(
-        '<div class="step">STEP 1</div>',
-        unsafe_allow_html=True
+        '<div class="card"><h3>1. Your Lyrics</h3></div>',
+        unsafe_allow_html=True,
     )
-
-    st.header("✍️ Write Your Lyrics")
 
     uploaded_lyrics = st.file_uploader(
-        "Upload a .txt lyric file",
-        type=["txt"]
+        "Upload lyrics",
+        type=["txt"],
+        key="lyrics_upload",
     )
 
     if uploaded_lyrics:
         try:
-            st.session_state.lyrics = uploaded_lyrics.read().decode(
-                "utf-8"
-            )
+            uploaded_text = uploaded_lyrics.read().decode("utf-8")
+            st.session_state.lyrics = uploaded_text
         except Exception:
-            st.error("Could not read the lyric file.")
+            st.error("Could not read that lyrics file.")
 
     lyrics = st.text_area(
         "Lyrics",
         value=st.session_state.lyrics,
         height=300,
-        placeholder="""[Intro]
-
-Yeah yeah...
-
-[Verse]
+        placeholder="""[Verse]
 Write your verse here...
 
-[Chorus]
-Write your chorus here...
+[Pre-Chorus]
+Build the emotion...
 
-[Verse]
-Write your second verse...
+[Chorus]
+Write your hook here...
+
+[Verse 2]
+Continue the story...
 
 [Bridge]
-Write your bridge...
+Change the feeling...
 
-[Outro]
-Write your outro...""",
-        key="lyrics_box"
+[Chorus]
+Bring the hook back...""",
     )
 
     st.session_state.lyrics = lyrics
 
-    st.caption(
-        f"{len(lyrics)} characters"
+    st.info(
+        "Tip: Use sections such as [Verse], [Chorus], "
+        "[Bridge] and [Outro] to give the model structure."
     )
 
-    # --------------------------------------------------------
+    # -----------------------------------------------------
     # STEP 2
-    # --------------------------------------------------------
+    # -----------------------------------------------------
 
     st.markdown(
-        '<div class="step">STEP 2</div>',
-        unsafe_allow_html=True
+        '<div class="card"><h3>2. Tell NEXA How It Should Sound</h3></div>',
+        unsafe_allow_html=True,
     )
 
-    st.header("🎧 Describe Your Sound")
-
-    st.write(
-        "Tell NEXA STUDIO how you want the song to feel."
-    )
-
-    style = st.text_area(
-        "Sound description",
-        value=st.session_state.style,
-        height=130,
+    sound_description = st.text_area(
+        "Describe the sound in your own words",
+        value=st.session_state.sound_description,
         placeholder=(
-            "Example: Emotional Nigerian Afrofusion with "
-            "deep bass, smooth drums, atmospheric synths, "
-            "melodic vocals and a catchy chorus."
-        )
+            "Example: Hot and lively Afrobeat with heavy drums, "
+            "deep bass, catchy melody and a late-night Nigerian vibe."
+        ),
+        height=120,
     )
 
-    st.session_state.style = style
+    st.session_state.sound_description = sound_description
 
     c1, c2 = st.columns(2)
 
@@ -586,66 +695,63 @@ Write your outro...""",
         genre = st.selectbox(
             "Genre",
             [
-                "Afrofusion",
                 "Afrobeat",
-                "Afropop",
-                "R&B",
+                "Afrofusion",
                 "Amapiano",
+                "R&B",
                 "Pop",
                 "Hip-Hop",
-                "Soul",
-                "Reggae",
                 "Dancehall",
-                "Other"
+                "Soul",
+                "Gospel",
+                "Alternative",
+                "Other",
             ],
-            index=0
+            index=0,
         )
 
         mood = st.selectbox(
             "Mood",
             [
-                "Emotional",
+                "Energetic",
                 "Chill",
+                "Emotional",
                 "Romantic",
                 "Dark",
                 "Happy",
-                "Energetic",
+                "Uplifting",
                 "Melancholic",
+                "Aggressive",
+                "Dreamy",
                 "Spiritual",
-                "Confident",
-                "Dreamy"
-            ]
+            ],
         )
 
     with c2:
 
-        vocal = st.selectbox(
-            "Vocal style",
+        vocal_style = st.selectbox(
+            "Vocal Style",
             [
                 "Male",
                 "Female",
-                "Soft",
-                "Powerful",
-                "Melodic",
-                "Soulful"
-            ]
+                "Soft Male",
+                "Soft Female",
+                "Powerful Male",
+                "Powerful Female",
+                "Mixed",
+            ],
         )
 
         bpm = st.slider(
-            "Approximate BPM",
+            "Tempo / BPM",
             min_value=60,
-            max_value=180,
+            max_value=160,
             value=100,
-            step=1
+            step=1,
         )
 
-    st.session_state.genre = genre
-    st.session_state.mood = mood
-    st.session_state.vocal = vocal
-    st.session_state.bpm = bpm
-
     artist = st.selectbox(
-        "🎨 Artist inspiration",
+        "Artist / Sound Inspiration",
         [
             "None",
             "Omah Lay",
@@ -653,570 +759,633 @@ Write your outro...""",
             "Tems",
             "Wizkid",
             "Rema",
+            "Davido",
             "Asake",
             "Fireboy DML",
-            "Ayra Starr",
-            "Davido"
-        ]
+        ],
     )
 
-    st.session_state.artist = artist
-
-    st.info(
-        "Artist inspiration is treated as a broad musical reference. "
-        "NEXA STUDIO will not intentionally copy an artist's exact "
-        "voice, recording or melody."
+    st.caption(
+        "Artist inspiration is translated into broad musical "
+        "characteristics. NEXA does not attempt to copy an artist's "
+        "exact voice, recording or melody."
     )
 
-    # --------------------------------------------------------
-    # BUILD TAGS
-    # --------------------------------------------------------
+    # -----------------------------------------------------
+    # HEARTMULA TAGS
+    # -----------------------------------------------------
 
-    tags = (
-        f"{genre},"
-        f"{mood},"
-        f"{vocal} vocals,"
-        f"{bpm} BPM,"
-        f"{style}"
+    generated_tags = build_heartmula_tags(
+        genre,
+        mood,
+        vocal_style,
+        bpm,
+        sound_description,
+        artist,
     )
 
-    if artist != "None":
-        tags += (
-            f", contemporary Nigerian sound"
+    with st.expander("🔧 Advanced AI generation settings"):
+
+        duration = st.slider(
+            "Maximum song duration",
+            min_value=30,
+            max_value=180,
+            value=60,
+            step=10,
+            help="HeartMuLa currently allows up to 180 seconds in this Space.",
         )
 
-    # --------------------------------------------------------
-    # STEP 3
-    # --------------------------------------------------------
-
-    st.markdown(
-        '<div class="step">STEP 3</div>',
-        unsafe_allow_html=True
-    )
-
-    st.header("🎵 Generate Your Song")
-
-    with st.expander("View HeartMuLa generation tags"):
-        st.code(tags)
-
-    if not lyrics.strip():
-        st.warning(
-            "Enter your lyrics before generating."
+        temperature = st.slider(
+            "Creativity / Temperature",
+            min_value=0.1,
+            max_value=2.0,
+            value=1.0,
+            step=0.1,
         )
 
-    elif len(lyrics) < 20:
-        st.warning(
-            "Your lyrics are very short. Add more lyrics "
-            "for a more complete song."
+        topk = st.slider(
+            "Top-K",
+            min_value=1,
+            max_value=100,
+            value=50,
+            step=1,
         )
 
-    else:
-
-        generate = st.button(
-            "🔥 GENERATE SONG",
-            type="primary",
-            use_container_width=True
+        cfg_scale = st.slider(
+            "CFG Scale",
+            min_value=1.0,
+            max_value=3.0,
+            value=1.5,
+            step=0.1,
         )
 
-        if generate:
+        st.text_input(
+            "Generated HeartMuLa tags",
+            value=generated_tags,
+            disabled=True,
+        )
 
-            with st.spinner(
-                "Connecting to HeartMuLa and generating your song..."
-            ):
+    # -----------------------------------------------------
+    # GENERATE
+    # -----------------------------------------------------
+
+    st.markdown("---")
+
+    if st.button(
+        "🚀 GENERATE MY SONG",
+        type="primary",
+        use_container_width=True,
+    ):
+
+        if not lyrics.strip():
+            st.error("Please enter your lyrics first.")
+
+        elif not sound_description.strip():
+            st.error(
+                "Please describe how you want the song to sound."
+            )
+
+        else:
+
+            with st.status(
+                "Connecting to HeartMuLa...",
+                expanded=True,
+            ) as status:
 
                 try:
 
-                    result = generate_song(
-                        lyrics=lyrics,
-                        tags=tags
+                    st.write(
+                        "Preparing your lyrics and musical style..."
                     )
 
-                    audio_path = extract_audio_result(result)
+                    tags = generated_tags
 
-                    if audio_path:
+                    st.write(
+                        f"Style tags: {tags}"
+                    )
 
-                        st.session_state.generated_audio = audio_path
-                        st.session_state.generation_status = (
-                            "Song generated successfully."
-                        )
+                    st.write(
+                        "Sending the request to the HeartMuLa "
+                        "music model..."
+                    )
 
-                        # Save project metadata
-                        project = {
-                            "title": "NEXA Song",
-                            "lyrics": lyrics,
-                            "tags": tags,
-                            "genre": genre,
-                            "mood": mood,
-                            "vocal": vocal,
-                            "bpm": bpm,
-                            "created_at": datetime.now().isoformat(),
-                            "audio": audio_path
-                        }
+                    audio_path = generate_with_heartmula(
+                        lyrics=lyrics,
+                        tags=tags,
+                        duration=duration,
+                        temperature=temperature,
+                        topk=topk,
+                        cfg_scale=cfg_scale,
+                    )
 
-                        st.session_state.projects.append(
-                            project
-                        )
+                    st.session_state.generated_audio = audio_path
 
-                        st.success(
-                            "🎉 Your song has been generated!"
-                        )
+                    title = (
+                        f"NEXA Song "
+                        f"{datetime.now().strftime('%Y%m%d-%H%M')}"
+                    )
 
-                    else:
+                    st.session_state.generated_title = title
 
-                        st.error(
-                            "HeartMuLa returned a result, "
-                            "but NEXA STUDIO could not identify "
-                            "the audio file."
-                        )
+                    save_project(
+                        title,
+                        lyrics,
+                        tags,
+                        audio_path,
+                    )
 
-                        with st.expander(
-                            "Technical result"
-                        ):
-                            st.write(result)
+                    status.update(
+                        label="Song generated successfully! 🎉",
+                        state="complete",
+                    )
 
                 except Exception as e:
 
+                    status.update(
+                        label="Generation failed",
+                        state="error",
+                    )
+
                     st.error(
-                        "The HeartMuLa connection did not complete."
+                        "HeartMuLa could not generate the song."
+                    )
+
+                    st.code(
+                        str(e),
+                        language="text",
                     )
 
                     st.warning(
-                        "This does not necessarily mean the model "
-                        "failed. The Hugging Face Space may have "
-                        "changed its API endpoint or input format."
+                        "If the HeartMuLa Space is sleeping, "
+                        "wait a little and try again. The Space "
+                        "may need to wake up and load its model."
                     )
 
-                    with st.expander(
-                        "Technical details"
-                    ):
-                        st.exception(e)
-
-    # --------------------------------------------------------
-    # AUDIO PLAYER
-    # --------------------------------------------------------
+    # -----------------------------------------------------
+    # AUDIO RESULT
+    # -----------------------------------------------------
 
     if st.session_state.generated_audio:
 
-        st.divider()
+        st.markdown("---")
 
-        st.header("🎧 Your Generated Song")
+        st.success("🎉 Your generated track is ready!")
 
-        audio_path = st.session_state.generated_audio
+        st.audio(
+            st.session_state.generated_audio
+        )
 
         try:
 
-            st.audio(
-                audio_path,
-                format="audio/mpeg"
+            with open(
+                st.session_state.generated_audio,
+                "rb",
+            ) as audio_file:
+
+                file_data = audio_file.read()
+
+            filename = (
+                st.session_state.generated_title
+                .replace(" ", "_")
+                + ".wav"
             )
 
-            # Download
-            if os.path.exists(audio_path):
+            st.download_button(
+                "⬇️ Download Song",
+                data=file_data,
+                file_name=filename,
+                mime="audio/wav",
+                use_container_width=True,
+            )
 
-                with open(audio_path, "rb") as audio_file:
-
-                    st.download_button(
-                        "⬇️ DOWNLOAD SONG",
-                        data=audio_file.read(),
-                        file_name="nexa_song.mp3",
-                        mime="audio/mpeg",
-                        use_container_width=True
-                    )
-
-        except Exception as e:
-
-            st.error(
-                f"Could not play the generated audio: {e}"
+        except Exception:
+            st.info(
+                "The audio was generated, but the local download "
+                "file could not be prepared."
             )
 
 
-# ============================================================
+# =========================================================
 # RECORDING STUDIO
-# ============================================================
+# =========================================================
 
-elif st.session_state.page == "🎙️ Recording Studio":
+elif st.session_state.page == "Recording Studio":
 
-    st.markdown(
-        '<div class="nexa-title">RECORDING STUDIO</div>',
-        unsafe_allow_html=True
-    )
+    st.title("🎙️ Recording Studio")
 
     st.markdown(
-        '<div class="nexa-subtitle">'
-        'Record and prepare your vocals'
-        '</div>',
-        unsafe_allow_html=True
+        """
+        <div class="card">
+        <h3>Record or Upload Your Vocals</h3>
+        <p>
+        Bring your own voice into your NEXA project.
+        </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    st.header("🎙️ Upload Your Vocal")
-
-    vocal_file = st.file_uploader(
+    audio_upload = st.file_uploader(
         "Upload a vocal recording",
-        type=["wav", "mp3", "m4a", "ogg"]
+        type=["wav", "mp3", "m4a", "ogg"],
     )
 
-    if vocal_file:
+    if audio_upload:
 
-        st.audio(vocal_file)
+        st.session_state.recording = audio_upload
 
-        st.success(
-            "Vocal uploaded successfully."
-        )
+        st.success("Vocal recording uploaded.")
 
-    st.divider()
+        st.audio(audio_upload)
 
-    st.subheader("🎚️ Vocal Processing")
+    st.markdown("### Vocal Processing")
 
-    c1, c2 = st.columns(2)
+    col1, col2 = st.columns(2)
 
-    with c1:
-
-        noise_reduction = st.slider(
+    with col1:
+        noise_reduction = st.checkbox(
             "Noise Reduction",
-            0,
-            100,
-            50
+            value=True,
         )
 
-        pitch_correction = st.slider(
+        pitch_correction = st.checkbox(
             "Pitch Correction",
-            0,
-            100,
-            30
+            value=False,
         )
 
-    with c2:
-
-        reverb = st.slider(
-            "Reverb",
-            0,
-            100,
-            20
+        vocal_reverb = st.checkbox(
+            "Vocal Reverb",
+            value=True,
         )
 
-        vocal_volume = st.slider(
-            "Vocal Volume",
-            0,
-            100,
-            80
+    with col2:
+        vocal_delay = st.checkbox(
+            "Vocal Delay",
+            value=False,
+        )
+
+        vocal_compression = st.checkbox(
+            "Compression",
+            value=True,
+        )
+
+        stereo_vocal = st.checkbox(
+            "Stereo Width",
+            value=False,
         )
 
     st.info(
-        "The recording controls are ready. "
-        "Advanced vocal processing will be connected "
-        "to the audio-processing engine in the next stage."
+        "The recording workspace is ready for the next audio-processing "
+        "stage. Actual processing will be connected separately from "
+        "HeartMuLa generation."
     )
 
 
-# ============================================================
+# =========================================================
 # BEAT LAB
-# ============================================================
+# =========================================================
 
-elif st.session_state.page == "🥁 Beat Lab":
+elif st.session_state.page == "Beat Lab":
 
-    st.markdown(
-        '<div class="nexa-title">BEAT LAB</div>',
-        unsafe_allow_html=True
-    )
+    st.title("🥁 Beat Lab")
 
     st.markdown(
-        '<div class="nexa-subtitle">'
-        'Build the instrumental foundation'
-        '</div>',
-        unsafe_allow_html=True
-    )
-
-    beat_style = st.selectbox(
-        "Beat style",
-        [
-            "Afrobeat",
-            "Afrofusion",
-            "Amapiano",
-            "R&B",
-            "Hip-Hop",
-            "Dancehall",
-            "Pop",
-            "Ambient"
-        ]
-    )
-
-    beat_bpm = st.slider(
-        "BPM",
-        60,
-        180,
-        100
-    )
-
-    instruments = st.multiselect(
-        "Instruments",
-        [
-            "Drums",
-            "Bass",
-            "Piano",
-            "Guitar",
-            "Synth",
-            "Strings",
-            "Percussion",
-            "Pads"
-        ],
-        default=[
-            "Drums",
-            "Bass",
-            "Percussion"
-        ]
-    )
-
-    st.write(
-        f"**Selected:** {beat_style} • {beat_bpm} BPM"
-    )
-
-    st.write(
-        " • ".join(instruments)
-        if instruments
-        else "No instruments selected."
-    )
-
-    if st.button(
-        "🥁 GENERATE BEAT",
-        type="primary",
-        use_container_width=True
-    ):
-
-        st.info(
-            "Beat generation will use the same AI music "
-            "engine architecture. Full instrumental-only "
-            "generation is being connected separately."
-        )
-
-
-# ============================================================
-# MIX & MASTER
-# ============================================================
-
-elif st.session_state.page == "🎚️ Mix & Master":
-
-    st.markdown(
-        '<div class="nexa-title">MIX & MASTER</div>',
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        '<div class="nexa-subtitle">'
-        'Shape your final sound'
-        '</div>',
-        unsafe_allow_html=True
+        """
+        <div class="card">
+        <h3>Build Your Instrumental</h3>
+        <p>
+        Create the production foundation for your song.
+        </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     col1, col2 = st.columns(2)
 
     with col1:
 
-        st.subheader("🎚️ Mix")
+        st.selectbox(
+            "Beat Style",
+            [
+                "Afrobeat",
+                "Afrofusion",
+                "Amapiano",
+                "R&B",
+                "Hip-Hop",
+                "Dancehall",
+                "Pop",
+            ],
+        )
 
-        volume = st.slider(
-            "Volume",
-            0,
+        st.slider(
+            "BPM",
+            60,
+            160,
             100,
-            80
-        )
-
-        bass = st.slider(
-            "Bass",
-            -12,
-            12,
-            0
-        )
-
-        mid = st.slider(
-            "Mid",
-            -12,
-            12,
-            0
-        )
-
-        treble = st.slider(
-            "Treble",
-            -12,
-            12,
-            0
         )
 
     with col2:
 
-        st.subheader("✨ Effects")
-
-        compression = st.slider(
-            "Compression",
-            0,
-            100,
-            40
-        )
-
-        reverb_mix = st.slider(
-            "Reverb",
-            0,
-            100,
-            20
-        )
-
-        stereo_width = st.slider(
-            "Stereo Width",
-            0,
-            200,
-            100
-        )
-
-        mastering = st.selectbox(
-            "Mastering preset",
+        st.multiselect(
+            "Instruments",
             [
-                "Clean",
-                "Streaming",
-                "Loud",
-                "Warm",
-                "Afrobeats"
-            ]
+                "Drums",
+                "Bass",
+                "Piano",
+                "Guitar",
+                "Synth",
+                "Percussion",
+                "Pads",
+                "Strings",
+            ],
+            default=["Drums", "Bass"],
         )
 
-    st.info(
-        "Mixing and mastering controls are prepared. "
-        "Audio DSP processing will be connected in the "
-        "next production stage."
+        st.selectbox(
+            "Beat Energy",
+            [
+                "Chill",
+                "Smooth",
+                "Medium",
+                "Energetic",
+                "Club",
+            ],
+            index=3,
+        )
+
+    uploaded_beat = st.file_uploader(
+        "Upload your own beat",
+        type=["wav", "mp3", "m4a"],
     )
 
+    if uploaded_beat:
 
-# ============================================================
-# MY SONGS
-# ============================================================
+        st.session_state.beat_file = uploaded_beat
 
-elif st.session_state.page == "🎵 My Songs":
+        st.audio(uploaded_beat)
+
+        st.success("Beat added to your workspace.")
+
+    if st.button(
+        "🥁 Generate Instrumental",
+        use_container_width=True,
+    ):
+        st.info(
+            "HeartMuLa song generation is currently connected "
+            "through Create a Song. Dedicated Beat Lab generation "
+            "will use the same music engine in a later module."
+        )
+
+
+# =========================================================
+# MIX & MASTER
+# =========================================================
+
+elif st.session_state.page == "Mix & Master":
+
+    st.title("🎚️ Mix & Master")
 
     st.markdown(
-        '<div class="nexa-title">MY SONGS</div>',
-        unsafe_allow_html=True
+        """
+        <div class="card">
+        <h3>Prepare Your Track</h3>
+        <p>
+        Control the final character of your song.
+        </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    if not st.session_state.projects:
+    source_audio = st.file_uploader(
+        "Upload track for mixing/mastering",
+        type=["wav", "mp3", "m4a"],
+    )
 
-        st.info(
-            "You haven't created any songs in this session yet."
+    if source_audio:
+
+        st.session_state.master_file = source_audio
+
+        st.audio(source_audio)
+
+        st.markdown("### Mixing")
+
+        c1, c2 = st.columns(2)
+
+        with c1:
+
+            st.slider(
+                "Volume",
+                -20.0,
+                10.0,
+                0.0,
+            )
+
+            st.slider(
+                "Bass",
+                -12.0,
+                12.0,
+                0.0,
+            )
+
+            st.slider(
+                "Mid",
+                -12.0,
+                12.0,
+                0.0,
+            )
+
+        with c2:
+
+            st.slider(
+                "Treble",
+                -12.0,
+                12.0,
+                0.0,
+            )
+
+            st.slider(
+                "Compression",
+                0.0,
+                100.0,
+                35.0,
+            )
+
+            st.slider(
+                "Stereo Width",
+                0.0,
+                100.0,
+                50.0,
+            )
+
+        st.selectbox(
+            "Mastering Preset",
+            [
+                "Balanced",
+                "Loud",
+                "Warm",
+                "Bright",
+                "Streaming",
+                "Club",
+            ],
         )
+
+        if st.button(
+            "✨ Process Track",
+            type="primary",
+            use_container_width=True,
+        ):
+            st.info(
+                "The controls are prepared. Actual DSP processing "
+                "will be connected in the audio-processing module."
+            )
 
     else:
 
-        for i, project in enumerate(
-            reversed(st.session_state.projects)
+        st.info(
+            "Upload a generated song or vocal/beat mix to begin."
+        )
+
+
+# =========================================================
+# MY SONGS
+# =========================================================
+
+elif st.session_state.page == "My Songs":
+
+    st.title("💿 My Songs")
+
+    projects = st.session_state.projects
+
+    if not projects:
+
+        st.markdown(
+            """
+            <div class="card">
+            <h3>Your music library is empty.</h3>
+            <p>
+            Generate your first song and it will appear here.
+            </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if st.button(
+            "🎵 Create a Song",
+            use_container_width=True,
         ):
+            go("Create a Song")
 
-            with st.expander(
-                f"🎵 {project.get('title', 'NEXA Song')} "
-                f"— {project.get('genre', '')}"
-            ):
+    else:
 
-                st.write(
-                    f"**Mood:** {project.get('mood', '')}"
+        for index, project in enumerate(projects):
+
+            with st.container(border=True):
+
+                st.subheader(
+                    project["title"]
                 )
 
-                st.write(
-                    f"**Vocal:** {project.get('vocal', '')}"
+                st.caption(
+                    f"Created: {project['created']}"
                 )
 
-                st.write(
-                    f"**BPM:** {project.get('bpm', '')}"
+                st.caption(
+                    f"Style: {project['tags']}"
                 )
 
-                st.text_area(
-                    "Lyrics",
-                    project.get("lyrics", ""),
-                    height=180,
-                    key=f"song_lyrics_{i}"
-                )
+                if project.get("audio"):
 
-                audio = project.get("audio")
+                    try:
+                        st.audio(
+                            project["audio"]
+                        )
 
-                if audio and os.path.exists(audio):
+                        with open(
+                            project["audio"],
+                            "rb",
+                        ) as audio_file:
 
-                    st.audio(audio)
+                            st.download_button(
+                                "⬇️ Download",
+                                audio_file.read(),
+                                file_name=(
+                                    project["title"]
+                                    .replace(" ", "_")
+                                    + ".wav"
+                                ),
+                                mime="audio/wav",
+                                key=f"download_{index}",
+                            )
 
-                    with open(audio, "rb") as f:
-
-                        st.download_button(
-                            "⬇️ Download",
-                            f.read(),
-                            file_name=f"nexa_song_{i+1}.mp3",
-                            mime="audio/mpeg",
-                            key=f"download_{i}"
+                    except Exception:
+                        st.warning(
+                            "The saved audio file is no longer "
+                            "available in this session."
                         )
 
 
-# ============================================================
+# =========================================================
 # RELEASE MUSIC
-# ============================================================
+# =========================================================
 
-elif st.session_state.page == "🚀 Release Music":
+elif st.session_state.page == "Release Music":
 
-    st.markdown(
-        '<div class="nexa-title">RELEASE MUSIC</div>',
-        unsafe_allow_html=True
-    )
+    st.title("🚀 Release Music")
 
     st.markdown(
-        '<div class="nexa-subtitle">'
-        'Prepare your song for distribution'
-        '</div>',
-        unsafe_allow_html=True
-    )
-
-    artist_name = st.text_input(
-        "Artist name"
-    )
-
-    song_title = st.text_input(
-        "Song title"
-    )
-
-    release_date = st.date_input(
-        "Release date"
-    )
-
-    cover = st.file_uploader(
-        "Cover artwork",
-        type=["png", "jpg", "jpeg"]
+        """
+        <div class="card">
+        <h3>Take Your Music to the World</h3>
+        <p>
+        NEXA can prepare your release information, artwork,
+        metadata and files for distribution.
+        </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     platforms = st.multiselect(
-        "Platforms",
+        "Target Platforms",
         [
             "Spotify",
             "Apple Music",
             "YouTube Music",
             "Audiomack",
             "Boomplay",
-            "Amazon Music",
-            "Deezer",
-            "TikTok"
-        ]
+        ],
+        default=[
+            "Spotify",
+            "YouTube Music",
+        ],
     )
 
-    rights = st.checkbox(
-        "I confirm that I have the rights to distribute this music."
+    title = st.text_input(
+        "Song Title"
+    )
+
+    artist_name = st.text_input(
+        "Artist Name"
+    )
+
+    cover = st.file_uploader(
+        "Cover Artwork",
+        type=["png", "jpg", "jpeg"],
     )
 
     if st.button(
-        "🚀 PREPARE RELEASE",
+        "Prepare Release",
         type="primary",
-        use_container_width=True
+        use_container_width=True,
     ):
 
-        if not artist_name or not song_title:
+        if not title or not artist_name:
 
             st.warning(
-                "Enter your artist name and song title."
-            )
-
-        elif not rights:
-
-            st.warning(
-                "Confirm your music rights first."
+                "Enter your song title and artist name."
             )
 
         else:
@@ -1226,70 +1395,64 @@ elif st.session_state.page == "🚀 Release Music":
             )
 
             st.info(
-                "Direct distribution will be added later "
-                "through a music distributor. Spotify and "
-                "other major platforms generally receive "
-                "independent releases through distributors."
+                "Music is normally delivered to streaming services "
+                "through a music distributor rather than by directly "
+                "uploading an ordinary audio file to Spotify."
             )
 
 
-# ============================================================
+# =========================================================
 # SETTINGS
-# ============================================================
+# =========================================================
 
-elif st.session_state.page == "⚙️ Settings":
+elif st.session_state.page == "Settings":
+
+    st.title("⚙️ Settings")
 
     st.markdown(
-        '<div class="nexa-title">SETTINGS</div>',
-        unsafe_allow_html=True
-    )
+        "### NEXA STUDIO"
 
-    theme = st.selectbox(
-        "Studio appearance",
-        [
-            "NEXA Aurora",
-            "Midnight",
-            "Cosmic",
-            "Electric"
-        ]
-    )
-
-    st.checkbox(
-        "Private studio mode",
-        value=True,
-        disabled=True
-    )
-
-    st.info(
-        "NEXA STUDIO is currently designed as a private "
-        "personal workspace. Songs are stored only in the "
-        "current Streamlit session unless persistent storage "
-        "is added."
-    )
-
-    st.divider()
-
-    st.subheader("🎵 Music Engine")
-
-    st.write(
-        "Current engine: HeartMuLa via Hugging Face Space"
     )
 
     st.write(
-        f"Space: `{HEARTMULA_SPACE}`"
+        "Private AI music workspace"
     )
 
+    st.markdown("---")
 
-# ============================================================
-# FOOTER
-# ============================================================
+    st.markdown("### HeartMuLa")
 
-st.markdown(
-    """
-    <footer>
-        🎧 <strong>NEXA STUDIO</strong><br>
-        Step Into Your Next Sound
-    </footer>
-    """,
-    unsafe_allow_html=True
+    st.code(
+        HEARTMULA_SPACE,
+        language="text",
+    )
+
+    st.markdown(
+        """
+        <div class="status-good">
+        ✓ NEXA is configured to use the current HeartMuLa
+        ZeroGPU Space.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("---")
+
+    st.markdown("### About Artist Inspiration")
+
+    st.write(
+        "Artist inspiration is used only to translate a requested "
+        "sound into broad musical characteristics. The app does not "
+        "attempt to reproduce an artist's exact voice, recording, "
+        "melody or copyrighted song."
+    )
+
+    st.markdown("---")
+
+    st.markdown("### Technical Information")
+
+    st.write(
+        "HeartMuLa accepts lyrics and musical tags. NEXA converts "
+        "your natural-language sound description into those tags."
 )
